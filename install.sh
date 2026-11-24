@@ -16,9 +16,16 @@ die() { printf 'install: %s\n' "$*" >&2; exit 1; }
 major=$(sw_vers -productVersion | cut -d. -f1)
 [ "$major" -ge 11 ] || die "mosh needs macOS 11 or newer (this Mac: $(sw_vers -productVersion))"
 
-if [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
-  BIN=/usr/local/bin
-else
+# Prefer a directory that is ALREADY on the PATH and writable without sudo, so
+# "bh" works at once in this window. Never the system dirs.
+BIN=""
+IFS=: read -r -a path_dirs <<< "$PATH"
+for d in /usr/local/bin /opt/homebrew/bin "${path_dirs[@]}"; do
+  case ":$PATH:" in *":$d:"*) ;; *) continue ;; esac
+  case "$d" in /usr/local/*|/opt/homebrew/*|"$HOME"/*) ;; *) continue ;; esac
+  if [ -d "$d" ] && [ -w "$d" ]; then BIN="$d"; break; fi
+done
+if [ -z "$BIN" ]; then
   BIN="$HOME/.local/bin"
   mkdir -p "$BIN"
 fi
