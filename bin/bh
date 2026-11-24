@@ -9,12 +9,15 @@
 
 set -u
 
-VERSION="0.3.0"
+VERSION="0.4.0"
 HOST="${BH_HOST:-bothouse}"
 TRANSPORT="${BH_TRANSPORT:-mosh}"
 # The bothouse Mac is Intel Homebrew: its non-interactive PATH lacks /usr/local/bin.
 REMOTE_TMUX="${BH_REMOTE_TMUX:-/usr/local/bin/tmux}"
 REMOTE_MOSH_SERVER="${BH_REMOTE_MOSH_SERVER:-/usr/local/bin/mosh-server}"
+# bh sessions live on their own tmux server (socket "bh"), apart from the
+# sessions Bernardo and the bots keep on the default server.
+SOCKET="${BH_SOCKET:-bh}"
 # Default session name = your local user name, so you never land in someone
 # else's tmux session by accident.
 DEFAULT_SESSION="${BH_SESSION:-$(id -un)}"
@@ -65,16 +68,18 @@ attach() {
     # exit after 7 days without contact (the tmux session itself stays).
     # -D: reattaching detaches the old (dead) client, so its orphaned
     # mosh-server exits at once instead of holding the session.
+    # detach-on-destroy on: when this session ends, its clients detach instead
+    # of jumping into somebody else's session (the server default here is off).
     exec mosh --server="LANG=en_US.UTF-8 MOSH_SERVER_NETWORK_TMOUT=604800 $REMOTE_MOSH_SERVER" "$HOST" -- \
-      "$REMOTE_TMUX" new-session -A -D -s "$name"
+      "$REMOTE_TMUX" -L "$SOCKET" new-session -A -D -s "$name" \; set-option detach-on-destroy on
   else
-    exec ssh -t "$HOST" "$REMOTE_TMUX" new-session -A -D -s "$name"
+    exec ssh -t "$HOST" "$REMOTE_TMUX" -L "$SOCKET" new-session -A -D -s "$name" "\\;" set-option detach-on-destroy on
   fi
 }
 
 cmd_ls() {
   local out
-  out=$(remote "$REMOTE_TMUX" list-sessions \
+  out=$(remote "$REMOTE_TMUX" -L "$SOCKET" list-sessions \
     -F "'#{session_name}	#{session_windows} window(s)	#{?session_attached,attached,detached}	since #{t:session_created}'" 2>&1)
   case "$out" in
     *"no server running"*|*"no sessions"*|*"error connecting"*) echo "No sessions on $HOST. Start one with: bh" ;;
@@ -88,7 +93,9 @@ cmd_kill() {
   printf 'Close session "%s" on %s and stop everything in it? [y/N] ' "$1" "$HOST"
   read -r answer
   case "$answer" in y|Y|yes|s|S|sim) ;; *) echo "Nothing changed."; return 0 ;; esac
-  remote "$REMOTE_TMUX" kill-session -t "=$1" && echo "Session \"$1\" closed."
+  # Detach its clients first, so none of them lands in another session.
+  remote "$REMOTE_TMUX" -L "$SOCKET" detach-client -s "=$1" 2>/dev/null
+  remote "$REMOTE_TMUX" -L "$SOCKET" kill-session -t "=$1" && echo "Session \"$1\" closed."
 }
 
 term_clipboard_status() {

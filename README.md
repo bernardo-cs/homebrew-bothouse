@@ -25,5 +25,9 @@ Copy: in iTerm2, copies made on bothouse (tmux, Claude Code) land on your Mac by
 themselves. Terminal.app does not support this (no OSC 52); there, hold **Fn**
 while you select with the mouse, then Cmd-C.
 
+bh sessions run on their own tmux server on bothouse (`tmux -L bh`), apart from
+the sessions Bernardo and the bots keep on the default server. On bothouse:
+`tmux -L bh ls`.
+
 Needs a `Host bothouse` entry in `~/.ssh/config` that works with plain `ssh bothouse`.
 mosh comes from the official universal mosh.org package, so nothing is compiled.
