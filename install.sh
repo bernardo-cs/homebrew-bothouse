@@ -42,13 +42,20 @@ say "Installing into $BIN"
 install -m 755 "$tmp/bh" "$payload/bin/mosh" "$payload/bin/mosh-client" "$BIN/"
 [ -n "$MAN" ] && install -m 644 "$payload"/share/man/man1/mosh*.1 "$MAN/" 2>/dev/null || true
 
-if ! command -v bh >/dev/null 2>&1 || [ "$(command -v bh)" != "$BIN/bh" ]; then
-  case ":$PATH:" in *":$BIN:"*) ;; *)
-    say "Add $BIN to your PATH:"
-    echo "    echo 'export PATH=\"$BIN:\$PATH\"' >> ~/.zshrc && exec zsh"
-  esac
-fi
+# Put $BIN on the PATH for zsh (macOS default) and bash, once.
+NEW_WINDOW=""
+case ":$PATH:" in *":$BIN:"*) ;; *)
+  line="export PATH=\"$BIN:\$PATH\"  # added by the bh installer"
+  for rc in "$HOME/.zshrc" "$HOME/.bash_profile"; do
+    grep -qs "added by the bh installer" "$rc" || printf '\n%s\n' "$line" >> "$rc"
+  done
+  NEW_WINDOW=1
+esac
 
 say "Done: $("$BIN/bh" --version)"
+if [ -n "$NEW_WINDOW" ]; then
+  echo
+  printf '\033[1;33m%s\033[0m\n' "IMPORTANT: close this Terminal window and open a new one (Cmd-N) before you type bh."
+fi
 echo "Next:  bh doctor   (checks everything)"
 echo "Then:  bh          (open your session on bothouse)"
