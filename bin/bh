@@ -9,7 +9,7 @@
 
 set -u
 
-VERSION="0.1.1"
+VERSION="0.2.0"
 HOST="${BH_HOST:-bothouse}"
 TRANSPORT="${BH_TRANSPORT:-mosh}"
 # The bothouse Mac is Intel Homebrew: its non-interactive PATH lacks /usr/local/bin.
@@ -32,11 +32,11 @@ bh $VERSION — persistent sessions on $HOST (mosh + tmux)
   bh kill <name>     close session <name> (stops what runs in it)
   bh ssh [name]      same as "bh [name]", but over plain ssh (if mosh is blocked)
   bh doctor          check that everything works
-  bh setup           set up iTerm2 so that copy in tmux goes to your clipboard
   bh help            show this help
 
 Lost the connection? Just run the same "bh" command again.
 Inside tmux: detach with Ctrl-b d (the session keeps running).
+Copy text in Terminal.app: hold Fn while you select with the mouse, then Cmd-C.
 
 Environment: BH_HOST (default bothouse = the Host in ~/.ssh/config),
 BH_TRANSPORT (mosh|ssh), BH_SESSION (default session name).
@@ -97,6 +97,7 @@ term_clipboard_status() {
       else
         echo iterm-off
       fi ;;
+
     Apple_Terminal) echo apple-terminal ;;
     ghostty|WezTerm|kitty) echo ok ;;
     *) echo unknown ;;
@@ -114,7 +115,7 @@ cmd_doctor() {
 
   info "3. mosh on this Mac"
   if command -v mosh-client >/dev/null 2>&1; then echo "   ok ($(command -v mosh-client))"
-  else echo "   FAIL: mosh is missing. Run: brew reinstall bh"; fail=1; fi
+  else echo "   FAIL: mosh is missing. Install bh again (see the README)."; fail=1; fi
 
   info "4. mosh connection (UDP 60000-61000)"
   size=$(stty size 2>/dev/null)
@@ -136,29 +137,14 @@ cmd_doctor() {
   info "5. copy from tmux to your clipboard"
   case "$(term_clipboard_status)" in
     ok) echo "   ok (${TERM_PROGRAM:-terminal} accepts OSC 52)" ;;
-    iterm-off) echo "   FAIL: iTerm2 blocks clipboard access. Run: bh setup"; fail=1 ;;
-    apple-terminal) echo "   FAIL: Terminal.app cannot receive copies from tmux. Use iTerm2: bh setup"; fail=1 ;;
-    *) echo "   unknown terminal (${TERM_PROGRAM:-?}). iTerm2 is known to work: bh setup" ;;
+    iterm-off) echo "   iTerm2: turn on Settings > General > Selection > 'Applications in terminal may access clipboard'" ;;
+    *) echo "   Hold Fn while you select with the mouse, then Cmd-C."
+       echo "   (tmux selections without Fn stay on $HOST, they do not reach this Mac)" ;;
   esac
 
   echo
   if [ $fail -eq 0 ]; then info "All good."; else info "Some checks failed (see above)."; fi
   return $fail
-}
-
-cmd_setup() {
-  if [ ! -d "/Applications/iTerm.app" ] && [ ! -d "$HOME/Applications/iTerm.app" ]; then
-    info "Installing iTerm2 (a terminal that can receive copies from tmux)…"
-    brew install --cask iterm2 || die "could not install iTerm2"
-  fi
-  # "Applications in terminal may access clipboard" (Settings > General > Selection).
-  defaults write com.googlecode.iterm2 AllowClipboardAccess -bool true
-  info "iTerm2 is ready."
-  echo "Open iTerm2 and run 'bh' there. In tmux, select text with the mouse (or 'y' in"
-  echo "copy mode) and it goes straight to your Mac's clipboard."
-  if [ "${TERM_PROGRAM:-}" = "iTerm.app" ]; then
-    echo "Restart iTerm2 (Cmd-Q, then open it again) to apply the change."
-  fi
 }
 
 case "${1:-}" in
@@ -169,7 +155,6 @@ case "${1:-}" in
   kill) shift; cmd_kill "$@" ;;
   ssh) attach "${2:-$DEFAULT_SESSION}" ssh ;;
   doctor) cmd_doctor ;;
-  setup) cmd_setup ;;
   -*) die "unknown option '$1' (see: bh help)" ;;
   *) [ $# -eq 1 ] || die "too many arguments (see: bh help)"; attach "$1" "$TRANSPORT" ;;
 esac

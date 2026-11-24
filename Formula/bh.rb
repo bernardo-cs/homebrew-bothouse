@@ -31,7 +31,6 @@ class Bh < Formula
   def caveats
     <<~EOS
       First time:
-        bh setup     # iTerm2 + clipboard, so copy in tmux reaches your Mac
         bh doctor    # check that everything works
 
       Every day:
