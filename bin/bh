@@ -9,7 +9,7 @@
 
 set -u
 
-VERSION="0.2.0"
+VERSION="0.3.0"
 HOST="${BH_HOST:-bothouse}"
 TRANSPORT="${BH_TRANSPORT:-mosh}"
 # The bothouse Mac is Intel Homebrew: its non-interactive PATH lacks /usr/local/bin.
@@ -32,11 +32,13 @@ bh $VERSION — persistent sessions on $HOST (mosh + tmux)
   bh kill <name>     close session <name> (stops what runs in it)
   bh ssh [name]      same as "bh [name]", but over plain ssh (if mosh is blocked)
   bh doctor          check that everything works
+  bh setup           install iTerm2, so copies made on $HOST reach this Mac
   bh help            show this help
 
 Lost the connection? Just run the same "bh" command again.
 Inside tmux: detach with Ctrl-b d (the session keeps running).
-Copy text in Terminal.app: hold Fn while you select with the mouse, then Cmd-C.
+Copy: run bh in iTerm2 (bh setup) and copies reach your Mac by themselves.
+(Terminal.app cannot receive them: there, hold Fn while you select, then Cmd-C.)
 
 Environment: BH_HOST (default bothouse = the Host in ~/.ssh/config),
 BH_TRANSPORT (mosh|ssh), BH_SESSION (default session name).
@@ -137,14 +139,55 @@ cmd_doctor() {
   info "5. copy from tmux to your clipboard"
   case "$(term_clipboard_status)" in
     ok) echo "   ok (${TERM_PROGRAM:-terminal} accepts OSC 52)" ;;
-    iterm-off) echo "   iTerm2: turn on Settings > General > Selection > 'Applications in terminal may access clipboard'" ;;
-    *) echo "   Hold Fn while you select with the mouse, then Cmd-C."
-       echo "   (tmux selections without Fn stay on $HOST, they do not reach this Mac)" ;;
+    iterm-off) echo "   FAIL: iTerm2 blocks clipboard access. Run: bh setup"; fail=1 ;;
+    apple-terminal)
+      echo "   FAIL: Terminal.app ignores copies from $HOST (no OSC 52 support)."
+      echo "   Run 'bh setup' and use iTerm2 for bh. (Workaround: hold Fn while you select, then Cmd-C.)"
+      fail=1 ;;
+    *) echo "   unknown terminal (${TERM_PROGRAM:-?}). iTerm2 is known to work: bh setup" ;;
   esac
 
   echo
   if [ $fail -eq 0 ]; then info "All good."; else info "Some checks failed (see above)."; fi
   return $fail
+}
+
+cmd_setup() {
+  local app="" dest url sha ver major minor tmp
+  for d in /Applications "$HOME/Applications"; do
+    [ -d "$d/iTerm.app" ] && app="$d/iTerm.app"
+  done
+  if [ -z "$app" ]; then
+    major=$(sw_vers -productVersion | cut -d. -f1)
+    minor=$(sw_vers -productVersion | cut -d. -f2)
+    if [ "$major" -ge 13 ]; then
+      ver=latest; url="https://iterm2.com/downloads/stable/latest"; sha=""
+    elif [ "$major" -eq 12 ] && [ "${minor:-0}" -ge 4 ]; then
+      ver=3.6.11; url="https://iterm2.com/downloads/stable/iTerm2-3_6_11.zip"
+      sha=36e78c5049560eaa8e122224f6652eb4b229c61cd5e7332d6d25b5c36f7398e7
+    else
+      ver=3.5.14; url="https://iterm2.com/downloads/stable/iTerm2-3_5_14.zip"
+      sha=585bd119e4cf3a5e6bfa6f3b6afecf416f02e28f8d81a3a1e949855da058cbdd
+    fi
+    if [ -w /Applications ]; then dest=/Applications; else dest="$HOME/Applications"; mkdir -p "$dest"; fi
+    info "Installing iTerm2 $ver into $dest (for macOS $(sw_vers -productVersion))…"
+    tmp=$(mktemp -d)
+    curl -fsSL --retry 3 -o "$tmp/iterm.zip" "$url" || { rm -rf "$tmp"; die "could not download iTerm2"; }
+    if [ -n "$sha" ] && ! echo "$sha  $tmp/iterm.zip" | shasum -a 256 -c - >/dev/null 2>&1; then
+      rm -rf "$tmp"; die "iTerm2 download is corrupt (checksum mismatch)"
+    fi
+    ditto -x -k "$tmp/iterm.zip" "$dest" || { rm -rf "$tmp"; die "could not unpack iTerm2"; }
+    rm -rf "$tmp"
+    app="$dest/iTerm.app"
+  fi
+  # Settings > General > Selection > "Applications in terminal may access clipboard".
+  defaults write com.googlecode.iterm2 AllowClipboardAccess -bool true
+  info "iTerm2 is ready: $app"
+  if pgrep -x iTerm2 >/dev/null 2>&1; then
+    echo "iTerm2 is open: quit it (Cmd-Q) and open it again so the clipboard setting applies."
+  fi
+  echo "From now on, open iTerm2 and type bh there. Copies made on $HOST land on this Mac."
+  open "$app" 2>/dev/null || true
 }
 
 case "${1:-}" in
@@ -155,6 +198,7 @@ case "${1:-}" in
   kill) shift; cmd_kill "$@" ;;
   ssh) attach "${2:-$DEFAULT_SESSION}" ssh ;;
   doctor) cmd_doctor ;;
+  setup) cmd_setup ;;
   -*) die "unknown option '$1' (see: bh help)" ;;
   *) [ $# -eq 1 ] || die "too many arguments (see: bh help)"; attach "$1" "$TRANSPORT" ;;
 esac

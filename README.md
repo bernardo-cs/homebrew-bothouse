@@ -15,12 +15,15 @@ Or with Homebrew (needs the Command Line Tools): `brew install bernardo-cs/botho
 ## Use
 
 ```sh
+bh setup    # install iTerm2 (Terminal.app cannot receive copies from bothouse)
 bh doctor   # check everything
 bh          # open (or reopen) your session; lost the connection? run it again
 bh help     # sessions by name, list, kill, plain-ssh fallback
 ```
 
-Copy text in Terminal.app: hold **Fn** while you select with the mouse, then Cmd-C.
+Copy: in iTerm2, copies made on bothouse (tmux, Claude Code) land on your Mac by
+themselves. Terminal.app does not support this (no OSC 52); there, hold **Fn**
+while you select with the mouse, then Cmd-C.
 
 Needs a `Host bothouse` entry in `~/.ssh/config` that works with plain `ssh bothouse`.
 mosh comes from the official universal mosh.org package, so nothing is compiled.

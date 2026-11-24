@@ -31,6 +31,7 @@ class Bh < Formula
   def caveats
     <<~EOS
       First time:
+        bh setup     # iTerm2, so copies made on bothouse reach this Mac
         bh doctor    # check that everything works
 
       Every day:
