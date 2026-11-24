@@ -9,7 +9,7 @@
 
 set -u
 
-VERSION="0.4.0"
+VERSION="0.4.1"
 HOST="${BH_HOST:-bothouse}"
 TRANSPORT="${BH_TRANSPORT:-mosh}"
 # The bothouse Mac is Intel Homebrew: its non-interactive PATH lacks /usr/local/bin.
@@ -20,7 +20,7 @@ REMOTE_MOSH_SERVER="${BH_REMOTE_MOSH_SERVER:-/usr/local/bin/mosh-server}"
 SOCKET="${BH_SOCKET:-bh}"
 # Default session name = your local user name, so you never land in someone
 # else's tmux session by accident.
-DEFAULT_SESSION="${BH_SESSION:-$(id -un)}"
+DEFAULT_SESSION="${BH_SESSION:-$(id -un | tr -c 'A-Za-z0-9_\n-' -)}"
 
 die() { printf 'bh: %s\n' "$*" >&2; exit 1; }
 info() { printf '\033[1m%s\033[0m\n' "$*"; }
@@ -34,12 +34,13 @@ bh $VERSION — persistent sessions on $HOST (mosh + tmux)
   bh ls              list the sessions on $HOST
   bh kill <name>     close session <name> (stops what runs in it)
   bh ssh [name]      same as "bh [name]", but over plain ssh (if mosh is blocked)
+  bh old [name]      list or open sessions made before bh 0.4 (plain ssh)
   bh doctor          check that everything works
   bh setup           install iTerm2, so copies made on $HOST reach this Mac
   bh help            show this help
 
 Lost the connection? Just run the same "bh" command again.
-Inside tmux: detach with Ctrl-b d (the session keeps running).
+Inside tmux: detach with Ctrl-a d (the session keeps running). Ctrl-a is the tmux key on $HOST.
 Copy: run bh in iTerm2 (bh setup) and copies reach your Mac by themselves.
 (Terminal.app cannot receive them: there, hold Fn while you select, then Cmd-C.)
 
@@ -50,11 +51,11 @@ EOF
 
 valid_name() {
   case "$1" in
-    ''|*[!A-Za-z0-9_.-]*) die "session name must use only letters, digits, '.', '_', '-': '$1'" ;;
+    ''|*[!A-Za-z0-9_-]*) die "session name must use only letters, digits, '_', '-': '$1'" ;;
   esac
 }
 
-remote() { ssh -o ConnectTimeout=8 "$HOST" "$@"; }
+remote() { ssh -n -o ConnectTimeout=8 "$HOST" "$@"; }
 
 attach() {
   local name="$1" transport="$2"
@@ -62,7 +63,7 @@ attach() {
   # Tell the terminal title which session this is.
   printf '\033]0;bh: %s@%s\007' "$name" "$HOST"
   if [ "$transport" = "mosh" ]; then
-    command -v mosh >/dev/null 2>&1 || die "mosh is not installed (brew reinstall bh), or use: bh ssh $name"
+    command -v mosh >/dev/null 2>&1 || die "mosh is not installed (install bh again, see the README), or use: bh ssh $name"
     # LANG: mosh-server refuses to start without a UTF-8 locale.
     # NETWORK_TMOUT: a dropped client leaves its mosh-server behind; let it
     # exit after 7 days without contact (the tmux session itself stays).
@@ -71,9 +72,9 @@ attach() {
     # detach-on-destroy on: when this session ends, its clients detach instead
     # of jumping into somebody else's session (the server default here is off).
     exec mosh --server="LANG=en_US.UTF-8 MOSH_SERVER_NETWORK_TMOUT=604800 $REMOTE_MOSH_SERVER" "$HOST" -- \
-      "$REMOTE_TMUX" -L "$SOCKET" new-session -A -D -s "$name" \; set-option detach-on-destroy on
+      "$REMOTE_TMUX" -L "$SOCKET" new-session -A -D -s "$name" \; set-option detach-on-destroy on \; set-option -s copy-command ""
   else
-    exec ssh -t "$HOST" "$REMOTE_TMUX" -L "$SOCKET" new-session -A -D -s "$name" "\\;" set-option detach-on-destroy on
+    exec ssh -t "$HOST" "$REMOTE_TMUX" -L "$SOCKET" new-session -A -D -s "$name" "\\;" set-option detach-on-destroy on "\\;" set-option -s copy-command "''"
   fi
 }
 
@@ -87,9 +88,22 @@ cmd_ls() {
   esac
 }
 
+cmd_old() {
+  local name="${1:-}"
+  if [ -z "$name" ]; then
+    echo "Sessions from before bh 0.4 (default tmux server on $HOST):"
+    remote "$REMOTE_TMUX" list-sessions -F "'  #{session_name}'" 2>/dev/null || echo "  (none)"
+    echo "Open one with: bh old <name>   (detach with Ctrl-a d)"
+    return 0
+  fi
+  case "$name" in *[!A-Za-z0-9_.-]*) die "bad session name: '$name'" ;; esac
+  exec ssh -t "$HOST" "$REMOTE_TMUX" attach-session -t "'=$name'"
+}
+
 cmd_kill() {
   [ $# -eq 1 ] || die "usage: bh kill <name>"
   valid_name "$1"
+  remote "$REMOTE_TMUX" -L "$SOCKET" has-session -t "=$1" 2>/dev/null || die "there is no session \"$1\" (see: bh ls)"
   printf 'Close session "%s" on %s and stop everything in it? [y/N] ' "$1" "$HOST"
   read -r answer
   case "$answer" in y|Y|yes|s|S|sim) ;; *) echo "Nothing changed."; return 0 ;; esac
@@ -121,6 +135,10 @@ cmd_doctor() {
   info "2. tmux and mosh-server on $HOST"
   if remote test -x "$REMOTE_TMUX" -a -x "$REMOTE_MOSH_SERVER" 2>/dev/null; then echo "   ok"
   else echo "   FAIL: $REMOTE_TMUX or $REMOTE_MOSH_SERVER is missing on $HOST. Ask Bernardo."; fail=1; fi
+
+  info "2b. copy forwarding on $HOST (tmux OSC 52 fix)"
+  if remote grep -q "'Ms=.E.52;c%p1'" .tmux.conf 2>/dev/null; then echo "   ok"
+  else echo "   FAIL: ~/.tmux.conf on $HOST lacks the Ms override; copies will not reach this Mac. Ask Bernardo."; fail=1; fi
 
   info "3. mosh on this Mac"
   if command -v mosh-client >/dev/null 2>&1; then echo "   ok ($(command -v mosh-client))"
@@ -203,7 +221,8 @@ case "${1:-}" in
   -v|--version|version) echo "bh $VERSION" ;;
   ls|list) cmd_ls ;;
   kill) shift; cmd_kill "$@" ;;
-  ssh) attach "${2:-$DEFAULT_SESSION}" ssh ;;
+  ssh) [ $# -le 2 ] || die "too many arguments (see: bh help)"; attach "${2:-$DEFAULT_SESSION}" ssh ;;
+  old) cmd_old "${2:-}" ;;
   doctor) cmd_doctor ;;
   setup) cmd_setup ;;
   -*) die "unknown option '$1' (see: bh help)" ;;

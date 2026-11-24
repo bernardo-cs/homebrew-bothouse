@@ -19,6 +19,7 @@ bh setup    # install iTerm2 (Terminal.app cannot receive copies from bothouse)
 bh doctor   # check everything
 bh          # open (or reopen) your session; lost the connection? run it again
 bh help     # sessions by name, list, kill, plain-ssh fallback
+bh old      # sessions made before bh 0.4 (they live on the default tmux server)
 ```
 
 Copy: in iTerm2, copies made on bothouse (tmux, Claude Code) land on your Mac by
