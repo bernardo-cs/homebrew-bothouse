@@ -2,7 +2,7 @@ class Bh < Formula
   desc "Persistent work sessions on the bothouse Mac (mosh + tmux)"
   homepage "https://github.com/bernardo-cs/homebrew-bothouse"
   url "https://github.com/bernardo-cs/homebrew-bothouse/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "sha256_of_tag_tarball"
+  sha256 "294d1451d37b41968b28687e2ef6bd1c30fe74cc8270565322017dc2ef866a2b"
   license "MIT"
 
   # Homebrew has no mosh bottle for Intel macOS, so "depends_on mosh" would
