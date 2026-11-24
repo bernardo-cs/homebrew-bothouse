@@ -9,7 +9,7 @@
 
 set -u
 
-VERSION="0.1.0"
+VERSION="0.1.1"
 HOST="${BH_HOST:-bothouse}"
 TRANSPORT="${BH_TRANSPORT:-mosh}"
 # The bothouse Mac is Intel Homebrew: its non-interactive PATH lacks /usr/local/bin.
@@ -117,7 +117,10 @@ cmd_doctor() {
   else echo "   FAIL: mosh is missing. Run: brew reinstall bh"; fail=1; fi
 
   info "4. mosh connection (UDP 60000-61000)"
-  if [ $fail -eq 0 ]; then
+  size=$(stty size 2>/dev/null)
+  if [ ! -t 0 ] || [ -z "$size" ] || [ "$size" = "0 0" ]; then
+    echo "   skipped (needs a real terminal window)"
+  elif [ $fail -eq 0 ]; then
     # Start a throwaway mosh-server and check it answers on UDP from here.
     if command -v gtimeout >/dev/null 2>&1; then T=gtimeout; else T=""; fi
     if ${T:+$T 20} mosh --server="LANG=en_US.UTF-8 $REMOTE_MOSH_SERVER" "$HOST" -- /usr/bin/true >/dev/null 2>&1; then
