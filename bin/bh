@@ -1,0 +1,168 @@
+#!/bin/bash
+# bh — persistent work sessions on the bothouse Mac.
+#
+# Wraps mosh (survives Wi-Fi drops, sleep, network changes) + tmux (keeps the
+# processes alive on the server when the client goes away). Reconnecting with
+# the same session name puts you back exactly where you were.
+#
+# Works with the macOS system bash 3.2 (Monterey) on purpose.
+
+set -u
+
+VERSION="0.1.0"
+HOST="${BH_HOST:-bothouse}"
+TRANSPORT="${BH_TRANSPORT:-mosh}"
+# The bothouse Mac is Intel Homebrew: its non-interactive PATH lacks /usr/local/bin.
+REMOTE_TMUX="${BH_REMOTE_TMUX:-/usr/local/bin/tmux}"
+REMOTE_MOSH_SERVER="${BH_REMOTE_MOSH_SERVER:-/usr/local/bin/mosh-server}"
+# Default session name = your local user name, so you never land in someone
+# else's tmux session by accident.
+DEFAULT_SESSION="${BH_SESSION:-$(id -un)}"
+
+die() { printf 'bh: %s\n' "$*" >&2; exit 1; }
+info() { printf '\033[1m%s\033[0m\n' "$*"; }
+
+usage() {
+  cat <<EOF
+bh $VERSION — persistent sessions on $HOST (mosh + tmux)
+
+  bh                 open your session ("$DEFAULT_SESSION"); create it if needed
+  bh <name>          open session <name>; create it if needed
+  bh ls              list the sessions on $HOST
+  bh kill <name>     close session <name> (stops what runs in it)
+  bh ssh [name]      same as "bh [name]", but over plain ssh (if mosh is blocked)
+  bh doctor          check that everything works
+  bh setup           set up iTerm2 so that copy in tmux goes to your clipboard
+  bh help            show this help
+
+Lost the connection? Just run the same "bh" command again.
+Inside tmux: detach with Ctrl-b d (the session keeps running).
+
+Environment: BH_HOST (default bothouse = the Host in ~/.ssh/config),
+BH_TRANSPORT (mosh|ssh), BH_SESSION (default session name).
+EOF
+}
+
+valid_name() {
+  case "$1" in
+    ''|*[!A-Za-z0-9_.-]*) die "session name must use only letters, digits, '.', '_', '-': '$1'" ;;
+  esac
+}
+
+remote() { ssh -o ConnectTimeout=8 "$HOST" "$@"; }
+
+attach() {
+  local name="$1" transport="$2"
+  valid_name "$name"
+  # Tell the terminal title which session this is.
+  printf '\033]0;bh: %s@%s\007' "$name" "$HOST"
+  if [ "$transport" = "mosh" ]; then
+    command -v mosh >/dev/null 2>&1 || die "mosh is not installed (brew reinstall bh), or use: bh ssh $name"
+    # LANG: mosh-server refuses to start without a UTF-8 locale.
+    exec mosh --server="LANG=en_US.UTF-8 $REMOTE_MOSH_SERVER" "$HOST" -- \
+      "$REMOTE_TMUX" new-session -A -s "$name"
+  else
+    exec ssh -t "$HOST" "$REMOTE_TMUX" new-session -A -s "$name"
+  fi
+}
+
+cmd_ls() {
+  local out
+  out=$(remote "$REMOTE_TMUX" list-sessions \
+    -F "'#{session_name}	#{session_windows} window(s)	#{?session_attached,attached,detached}	since #{t:session_created}'" 2>&1)
+  case "$out" in
+    *"no server running"*|*"no sessions"*|*"error connecting"*) echo "No sessions on $HOST. Start one with: bh" ;;
+    *) printf '%s\n' "$out" | column -t -s '	' ;;
+  esac
+}
+
+cmd_kill() {
+  [ $# -eq 1 ] || die "usage: bh kill <name>"
+  valid_name "$1"
+  printf 'Close session "%s" on %s and stop everything in it? [y/N] ' "$1" "$HOST"
+  read -r answer
+  case "$answer" in y|Y|yes|s|S|sim) ;; *) echo "Nothing changed."; return 0 ;; esac
+  remote "$REMOTE_TMUX" kill-session -t "=$1" && echo "Session \"$1\" closed."
+}
+
+term_clipboard_status() {
+  case "${TERM_PROGRAM:-}" in
+    iTerm.app)
+      if [ "$(defaults read com.googlecode.iterm2 AllowClipboardAccess 2>/dev/null)" = "1" ]; then
+        echo ok
+      else
+        echo iterm-off
+      fi ;;
+    Apple_Terminal) echo apple-terminal ;;
+    ghostty|WezTerm|kitty) echo ok ;;
+    *) echo unknown ;;
+  esac
+}
+
+cmd_doctor() {
+  local fail=0
+  info "1. ssh to $HOST"
+  if remote true 2>/dev/null; then echo "   ok"; else echo "   FAIL: 'ssh $HOST' does not work. Check the VPN and ~/.ssh/config."; fail=1; fi
+
+  info "2. tmux and mosh-server on $HOST"
+  if remote test -x "$REMOTE_TMUX" -a -x "$REMOTE_MOSH_SERVER" 2>/dev/null; then echo "   ok"
+  else echo "   FAIL: $REMOTE_TMUX or $REMOTE_MOSH_SERVER is missing on $HOST. Ask Bernardo."; fail=1; fi
+
+  info "3. mosh on this Mac"
+  if command -v mosh-client >/dev/null 2>&1; then echo "   ok ($(command -v mosh-client))"
+  else echo "   FAIL: mosh is missing. Run: brew reinstall bh"; fail=1; fi
+
+  info "4. mosh connection (UDP 60000-61000)"
+  if [ $fail -eq 0 ]; then
+    # Start a throwaway mosh-server and check it answers on UDP from here.
+    if command -v gtimeout >/dev/null 2>&1; then T=gtimeout; else T=""; fi
+    if ${T:+$T 20} mosh --server="LANG=en_US.UTF-8 $REMOTE_MOSH_SERVER" "$HOST" -- /usr/bin/true >/dev/null 2>&1; then
+      echo "   ok"
+    else
+      echo "   FAIL: mosh does not connect. UDP is probably blocked on this network. Use: bh ssh"
+      fail=1
+    fi
+  else
+    echo "   skipped"
+  fi
+
+  info "5. copy from tmux to your clipboard"
+  case "$(term_clipboard_status)" in
+    ok) echo "   ok (${TERM_PROGRAM:-terminal} accepts OSC 52)" ;;
+    iterm-off) echo "   FAIL: iTerm2 blocks clipboard access. Run: bh setup"; fail=1 ;;
+    apple-terminal) echo "   FAIL: Terminal.app cannot receive copies from tmux. Use iTerm2: bh setup"; fail=1 ;;
+    *) echo "   unknown terminal (${TERM_PROGRAM:-?}). iTerm2 is known to work: bh setup" ;;
+  esac
+
+  echo
+  if [ $fail -eq 0 ]; then info "All good."; else info "Some checks failed (see above)."; fi
+  return $fail
+}
+
+cmd_setup() {
+  if [ ! -d "/Applications/iTerm.app" ] && [ ! -d "$HOME/Applications/iTerm.app" ]; then
+    info "Installing iTerm2 (a terminal that can receive copies from tmux)…"
+    brew install --cask iterm2 || die "could not install iTerm2"
+  fi
+  # "Applications in terminal may access clipboard" (Settings > General > Selection).
+  defaults write com.googlecode.iterm2 AllowClipboardAccess -bool true
+  info "iTerm2 is ready."
+  echo "Open iTerm2 and run 'bh' there. In tmux, select text with the mouse (or 'y' in"
+  echo "copy mode) and it goes straight to your Mac's clipboard."
+  if [ "${TERM_PROGRAM:-}" = "iTerm.app" ]; then
+    echo "Restart iTerm2 (Cmd-Q, then open it again) to apply the change."
+  fi
+}
+
+case "${1:-}" in
+  "") attach "$DEFAULT_SESSION" "$TRANSPORT" ;;
+  -h|--help|help) usage ;;
+  -v|--version|version) echo "bh $VERSION" ;;
+  ls|list) cmd_ls ;;
+  kill) shift; cmd_kill "$@" ;;
+  ssh) attach "${2:-$DEFAULT_SESSION}" ssh ;;
+  doctor) cmd_doctor ;;
+  setup) cmd_setup ;;
+  -*) die "unknown option '$1' (see: bh help)" ;;
+  *) [ $# -eq 1 ] || die "too many arguments (see: bh help)"; attach "$1" "$TRANSPORT" ;;
+esac
