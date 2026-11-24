@@ -5,7 +5,7 @@ Wi-Fi drops, sleep and network changes) and tmux (keeps processes running on the
 server when the client goes away).
 
 ```sh
-brew install OWNER/bothouse/bh
+brew install bernardo-cs/bothouse/bh
 bh setup    # iTerm2 + clipboard access, so copy in tmux reaches your Mac
 bh doctor   # check everything
 bh          # open (or reopen) your session
