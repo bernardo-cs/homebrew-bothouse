@@ -59,10 +59,14 @@ attach() {
   if [ "$transport" = "mosh" ]; then
     command -v mosh >/dev/null 2>&1 || die "mosh is not installed (brew reinstall bh), or use: bh ssh $name"
     # LANG: mosh-server refuses to start without a UTF-8 locale.
-    exec mosh --server="LANG=en_US.UTF-8 $REMOTE_MOSH_SERVER" "$HOST" -- \
-      "$REMOTE_TMUX" new-session -A -s "$name"
+    # NETWORK_TMOUT: a dropped client leaves its mosh-server behind; let it
+    # exit after 7 days without contact (the tmux session itself stays).
+    # -D: reattaching detaches the old (dead) client, so its orphaned
+    # mosh-server exits at once instead of holding the session.
+    exec mosh --server="LANG=en_US.UTF-8 MOSH_SERVER_NETWORK_TMOUT=604800 $REMOTE_MOSH_SERVER" "$HOST" -- \
+      "$REMOTE_TMUX" new-session -A -D -s "$name"
   else
-    exec ssh -t "$HOST" "$REMOTE_TMUX" new-session -A -s "$name"
+    exec ssh -t "$HOST" "$REMOTE_TMUX" new-session -A -D -s "$name"
   fi
 }
 
